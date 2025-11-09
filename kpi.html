@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KPI Maintenance Dashboard (SPA Murni, Final Fix)</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script> 
+    
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script> 
+    <script src="js/xlsx.full.min.js"></script>
+    
+    <script>
+        // ************************************************
+        // 🚨 GANTI DENGAN CONFIG PROYEK FIREBASE ANDA ASLI 🚨
+        // ************************************************
+        const firebaseConfig = {
+            apiKey: "AIzaSyD479IuamvEMbIGPZYALPjGntyD-KRsul8",
+            authDomain: "cgi-mtc-id.firebaseapp.com",
+            projectId: "cgi-mtc-id",
+            databaseURL: "https://cgi-mtc-id-default-rtdb.firebaseio.com",
+            storageBucket: "cgi-mtc-id.firebasestorage.app",
+            messagingSenderId: "514517569279",
+            appId: "1:514517569279:web:2537017d4d275d5ec246ca",
+            measurementId: "G-C91NNXH6HW"
+        };
+
+        let db;
+        let auth;
+        try {
+            const app = firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore(); 
+            auth = firebase.auth(); 
+        } catch (e) {
+            console.error("Gagal menginisialisasi Firebase:", e);
+        }
+        
+        if (typeof google !== 'undefined') {
+            google.charts.load('current', { 'packages': ['corechart', 'line', 'bar'] });
+        }
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0d1117; }
+        .glass { background-color: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 1rem; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1), 0 10px 15px rgba(0, 0, 0, 0.15); transition: transform 0.3s ease-in-out; }
+        .icon-menu:before { content: '☰'; }
+        .icon-x:before { content: '✕'; }
+        .icon-dashboard:before { content: '📊'; }
+        .icon-settings:before { content: '⚙️'; }
+        .icon-compressor:before { content: '💨'; }
+        .icon-water:before { content: '💧'; }
+        .icon-report:before { content: '📋'; }
+        .icon-clock:before { content: '⏱️'; }
+        .icon-target:before { content: '🎯'; }
+    </style>
+</head>
+
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+    
+    // --- UTILITIES & KOMPONEN NON-APP ---
+    const MOCK_KPI_DATA = { MTTF: { value: 0, unit: 'Jam', label: '...' }, MTBF: { value: 0, unit: 'Jam', label: '...' }, Downtime: { value: 0, unit: 'Jam', label: '...' }, PM_CM_Ratio: 50 };
+    const MOCK_ACTIVITY_DATA = [['Bulan', 'PM (Jam)', 'CM (Jam)'], ['Jan', 0, 0]]; 
+    
+    const formatMonthlyData = (data) => {
+        const formatted = [['Bulan', 'PM (Jam)', 'CM (Jam)']];
+        data.forEach(item => { formatted.push([item.name, item.PM, item.CM]); });
+        return formatted;
+    };
+    
+    const drawChart = (chartId, chartType, data, options) => {
+        if (typeof google !== 'undefined' && google.visualization && google.visualization.arrayToDataTable) {
+            const dataTable = google.visualization.arrayToDataTable(data);
+            const chartDiv = document.getElementById(chartId);
+            if (chartDiv) {
+                let chart;
+                switch (chartType) {
+                    case 'LineChart': chart = new google.visualization.LineChart(chartDiv); break;
+                    case 'PieChart': chart = new google.visualization.PieChart(chartDiv); break;
+                    case 'ColumnChart': chart = new google.visualization.ColumnChart(chartDiv); break;
+                    default: return;
+                }
+                chart.draw(dataTable, options);
+            }
+        }
+    };
+    
+    const KPICard = ({ iconClass, data }) => { 
+        const { value, unit, label } = data;
+        return (
+            <div className="glass p-6 rounded-xl shadow-2xl transition duration-300 transform hover:scale-[1.02] border border-gray-700/50">
+                <div className="flex items-center space-x-4">
+                    <span className={`w-10 h-10 text-emerald-400 bg-emerald-900/40 p-2 rounded-lg shadow-inner text-xl inline-flex items-center justify-center ${iconClass}`}></span>
+                    <div>
+                        <p className="text-3xl font-bold text-white leading-none">
+                            {value.toLocaleString('id-ID')}
+                            <span className="text-base font-medium ml-1 text-emerald-300">{unit}</span>
+                        </p>
+                        <p className="text-sm text-gray-400 mt-1 uppercase tracking-wider">{label}</p>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const NavItem = ({ iconClass, label, pageId, currentPage, setActivePage }) => (
+        <button
+            onClick={() => { setActivePage(pageId); }}
+            className={`flex items-center w-full p-3 rounded-xl transition duration-200 text-left ${
+                currentPage === pageId
+                    ? 'bg-teal-500 text-gray-900 shadow-lg shadow-teal-500/50 font-semibold'
+                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+            }`}
+        >
+            <span className={`text-xl shrink-0 ${iconClass}`}></span>
+            <span className="text-sm tracking-wide ml-4">{label}</span>
+        </button>
+    );
+
+    const Sidebar = ({ isCollapsed, setActivePage, currentPage, toggleCollapse }) => {
+        const navItems = [
+            { id: 'dashboard', label: 'Dashboard KPI', iconClass: 'icon-dashboard' },
+            { id: 'kompresor_unit', label: 'Kompresor Unit', iconClass: 'icon-compressor' },
+            { id: 'cooling_tower', label: 'Cooling Tower', iconClass: 'icon-water' },
+            { id: 'master_mesin', label: 'Master Mesin', iconClass: 'icon-settings' },
+            { id: 'log_laporan', label: 'Log Laporan', iconClass: 'icon-report' },
+        ];
+        return (
+            <div
+                className={`bg-gray-900 text-white h-screen fixed top-0 left-0 transition-all duration-300 z-50 shadow-2xl ${
+                    isCollapsed ? 'w-20' : 'w-64'
+                }`}
+            >
+                <div className="p-4 flex items-center justify-between h-16 border-b border-gray-700/50">
+                    {!isCollapsed && <h1 className="text-xl font-extrabold text-teal-400 tracking-wider">MAIN MENU</h1>}
+                    <button onClick={toggleCollapse} className="text-gray-300 hover:text-white p-2 rounded-full hover:bg-gray-700">
+                        <span className={isCollapsed ? 'icon-menu w-6 h-6 text-xl' : 'icon-x w-6 h-6 text-xl'}></span>
+                    </button>
+                </div>
+                <nav className={`p-4 space-y-2 ${isCollapsed ? 'px-2' : 'px-4'}`}>
+                    {navItems.map((item) => (
+                        <NavItem key={item.id} {...item} currentPage={currentPage} setActivePage={setActivePage} />
+                    ))}
+                </nav>
+                <div className="absolute bottom-4 w-full px-4 text-center text-xs text-gray-500">
+                    {!isCollapsed && <p>© 2025 Dashboard | Maintenance</p>}
+                </div>
+            </div>
+        );
+    };
+
+    const DashboardContent = () => {
+        const [kpiData, setKpiData] = useState(MOCK_KPI_DATA);
+        const [monthlyActivityData, setMonthlyActivityData] = useState(MOCK_ACTIVITY_DATA);
+        const [isLoading, setIsLoading] = useState(true);
+        const [dataError, setDataError] = useState(null);
+
+        useEffect(() => {
+            const fetchDataFromFirebase = async () => {
+                if (typeof db === 'undefined') { setDataError("Firebase Firestore tidak terinisialisasi."); setIsLoading(false); return; }
+                try {
+                    const kpiDoc = await db.collection("kpi_metrics").doc("current_snapshot").get();
+                    if (kpiDoc.exists) {
+                        const data = kpiDoc.data();
+                        const totalDowntimeHours = data.total_downtime_minutes ? (data.total_downtime_minutes / 60) : 0; 
+                        setKpiData({ MTTF: { value: data.mttf || 0, unit: 'Jam', label: 'Waktu Rata-Rata Menuju Kegagalan' }, MTBF: { value: data.mtbf || 0, unit: 'Jam', label: 'Waktu Rata-Rata Antar Kegagalan' }, Downtime: { value: parseFloat(totalDowntimeHours.toFixed(2)), unit: 'Jam', label: 'Total Waktu Henti (Downtime)' }, PM_CM_Ratio: data.pm_cm_ratio !== undefined ? data.pm_cm_ratio : 50, });
+                    }
+                    const activitySnapshot = await db.collection("monthly_summary").orderBy("year", "asc").orderBy("month_index", "asc").get();
+                    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+                    const activityList = activitySnapshot.docs.map(doc => { const data = doc.data(); return { name: monthNames[data.month_index - 1], PM: data.PM || 0, CM: data.CM || 0, }; });
+                    setMonthlyActivityData(formatMonthlyData(activityList.length > 0 ? activityList : MOCK_ACTIVITY_DATA.slice(1)));
+                } catch (error) { 
+                    // 🚨 PENTING: Error "Missing or insufficient permissions" akan tertangkap di sini
+                    console.error("Error fetching data dari Firebase:", error); 
+                    setDataError(`Gagal mengambil data: ${error.message}. Cek Firestore Rules Anda!`); 
+                } finally { setIsLoading(false); }
+            };
+            fetchDataFromFirebase();
+        }, []);
+
+        useEffect(() => {
+            if (!isLoading && !dataError && typeof google !== 'undefined' && google.visualization) {
+                google.charts.setOnLoadCallback(() => {
+                    const baseOptions = { backgroundColor: { fill: 'transparent' }, legend: { position: 'bottom', textStyle: { color: '#ffffff' } }, hAxis: { textStyle: { color: '#9ca3af' } }, vAxis: { textStyle: { color: '#9ca3af' }, gridlines: { color: '#4b5563' } }, chartArea: { width: '85%', height: '70%' }, tooltip: { isHtml: true, trigger: 'focus' }, };
+                    const ratioData = [['Tipe', 'Persentase'], ['Preventif', kpiData.PM_CM_Ratio], ['Korektif', 100 - kpiData.PM_CM_Ratio]];
+                    const lineOptions = { ...baseOptions, colors: ['#10b981', '#ef4444'], series: { 0: { lineWidth: 3, pointSize: 6 }, 1: { lineWidth: 3, pointSize: 6 } } };
+                    drawChart('lineChartDiv', 'LineChart', monthlyActivityData, lineOptions);
+                    const pieOptions = { ...baseOptions, pieHole: 0.4, colors: ['#10b981', '#ef4444'], legend: { position: 'right', textStyle: { color: '#ffffff' } }, chartArea: { width: '100%', height: '90%' }, tooltip: { textStyle: { color: '#000000' } } };
+                    drawChart('pieChartDiv', 'PieChart', ratioData, pieOptions);
+                    const columnOptions = { ...baseOptions, colors: ['#10b981', '#f59e0b'], isStacked: false };
+                    drawChart('columnChartDiv', 'ColumnChart', monthlyActivityData, columnOptions);
+                });
+            }
+        }, [monthlyActivityData, kpiData, isLoading, dataError]); 
+
+        if (isLoading) { return <div className="p-10 text-center text-white text-lg">Loading Data KPI dari Firebase...</div>; }
+        if (dataError) { return <div className="p-10 text-center text-red-400 text-lg">{dataError}</div>; }
+
+        return (
+            <div className="space-y-8 p-6">
+                <h2 className="text-3xl font-extrabold text-white mb-6">KPI Kinerja Pemeliharaan</h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <KPICard iconClass="icon-clock" data={kpiData.MTTF} />
+                    <KPICard iconClass="icon-target" data={kpiData.MTBF} />
+                    <KPICard iconClass="icon-x" data={kpiData.Downtime} />
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-2 glass p-6 rounded-xl"><h3 className="text-xl font-bold text-white mb-4 border-b border-gray-700/50 pb-2">Tren PM vs CM Bulanan (Jam)</h3><div id="lineChartDiv" style={{ height: 350 }}></div></div>
+                    <div className="glass p-6 rounded-xl flex flex-col items-center justify-center"><h3 className="text-xl font-bold text-white mb-4 border-b border-gray-700/50 pb-2 w-full text-center">Rasio PM : CM ({kpiData.PM_CM_Ratio}%)</h3><div id="pieChartDiv" style={{ height: 250, width: '100%' }}></div></div>
+                </div>
+                <div className="glass p-6 rounded-xl">
+                    <h3 className="text-xl font-bold text-white mb-4 border-b border-gray-700/50 pb-2">Perbandingan Total Aktivitas Bulanan (Jam)</h3>
+                    <div id="columnChartDiv" style={{ height: 350 }}></div>
+                </div>
+            </div>
+        );
+    };
+
+    const KompresorUnitPage = () => ( <div className="p-8"><h2 className="text-4xl font-extrabold text-teal-400 mb-6">Kompresor Unit Management</h2><div className="glass p-6 rounded-xl"><p className="text-gray-300">Konten Manajemen Kompresor akan ditambahkan di sini.</p></div></div> );
+    const CoolingTowerPage = () => ( <div className="p-8"><h2 className="text-4xl font-extrabold text-teal-400 mb-6">Cooling Tower System</h2><div className="glass p-6 rounded-xl"><p className="text-gray-300">Konten Cooling Tower akan ditambahkan di sini.</p></div></div> );
+    const MasterMesinPage = () => ( <div className="p-8"><h2 className="text-4xl font-extrabold text-teal-400 mb-6">Master Mesin (Manajemen Aset)</h2><div className="glass p-6 rounded-xl"><p className="text-gray-300">Konten Master Mesin (Aset) akan ditambahkan di sini.</p></div></div> );
+    const LogLaporanPage = () => ( <div className="p-8"><h2 className="text-4xl font-extrabold text-teal-400 mb-6">Input Log Laporan Maintenance</h2><div className="glass p-6 rounded-xl"><p className="text-gray-300">Konten Log Laporan (Formulir Input) akan ditambahkan di sini.</p></div></div> );
+
+
+    // --- KOMPONEN UTAMA (APP) ---
+    const App = () => {
+        const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+        const [currentPage, setCurrentPage] = useState('dashboard'); 
+        const [isAuthChecking, setIsAuthChecking] = useState(true); 
+
+        useEffect(() => {
+            if (typeof auth !== 'undefined') {
+                const unsubscribe = auth.onAuthStateChanged((user) => {
+                    if (!user) {
+                        window.location.replace("index.html");
+                    } else {
+                        setIsAuthChecking(false); 
+                    }
+                });
+                return () => unsubscribe(); 
+            } else {
+                setIsAuthChecking(false);
+            }
+        }, []);
+        
+        const renderContent = useMemo(() => {
+            switch (currentPage) {
+                case 'kompresor_unit': return <KompresorUnitPage />;
+                case 'cooling_tower': return <CoolingTowerPage />;
+                case 'master_mesin': return <MasterMesinPage />;
+                case 'log_laporan': return <LogLaporanPage />;
+                case 'dashboard':
+                default: return <DashboardContent />;
+            }
+        }, [currentPage]);
+        
+        const toggleSidebar = () => { setIsSidebarCollapsed(!isSidebarCollapsed); };
+        const handleLogout = () => {
+             if (typeof auth !== 'undefined') {
+                 auth.signOut().then(() => { window.location.replace("index.html"); }).catch((error) => { console.error("Logout Error:", error); alert("Gagal Logout. Cek konsol."); });
+             } else { window.location.replace("index.html"); }
+        };
+        
+        const mainContentStyle = isSidebarCollapsed ? 'ml-20' : 'ml-64';
+
+        if (isAuthChecking) {
+            return <div className="min-h-screen bg-gray-900 flex items-center justify-center text-white text-xl">Memverifikasi Otentikasi...</div>;
+        }
+
+        return (
+            <div className="min-h-screen bg-gray-900 font-sans antialiased">
+                <Sidebar
+                    isCollapsed={isSidebarCollapsed}
+                    toggleCollapse={toggleSidebar}
+                    currentPage={currentPage}
+                    setActivePage={setCurrentPage}
+                />
+
+                <main
+                    className={`transition-all duration-300 min-h-screen ${mainContentStyle} p-4`}
+                    style={{ transitionProperty: 'margin-left' }}
+                >
+                    <header className="h-12 flex items-center justify-between text-white mb-6">
+                        <h1 className="text-2xl font-bold tracking-tight text-white/90 capitalize">
+                            {/* 🚨 PERBAIKAN: Menambahkan safety check (currentPage || '') */}
+                            {(currentPage || '').replace('_', ' ')}
+                        </h1>
+                        <div className="flex items-center space-x-3">
+                            <div className="text-sm text-gray-400">
+                                Pengguna: Manajer Pemeliharaan
+                            </div>
+                            <button onClick={handleLogout} className="bg-red-600 hover:bg-red-700 text-white font-medium py-1 px-3 rounded-md text-sm">
+                                Logout
+                            </button>
+                        </div>
+                    </header>
+
+                    {renderContent}
+
+                </main>
+            </div>
+        );
+    };
+
+    const container = document.getElementById('root');
+    if (container) {
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    } else {
+        console.error("Elemen root tidak ditemukan.");
+    }
+
+</script>
+
+</body>
+</html>
