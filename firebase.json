@@ -1,0 +1,51 @@
+{
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    
+    // START PERUBAHAN
+    
+    // 1. PENGATURAN ROUTING UNTUK SPA
+    "rewrites": [
+      {
+        "source": "**",
+        // Sesuaikan target ini jika file React utama Anda BUKAN index.html.
+        // Berdasarkan konteks, ini seharusnya index.html atau kpi.html. 
+        // Saya asumsikan index.html adalah halaman default/login.
+        "destination": "/index.html" 
+      }
+    ],
+
+    // 2. MENGHILANGKAN EKSTENSI .html DARI URL (Opsional, tapi direkomendasikan)
+    "cleanUrls": true,
+    
+    // END PERUBAHAN
+
+    "headers": [
+      {
+        "source": "**/*.@(js|css)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            // Cache 1 jam, baik untuk file statis seperti xlsx.full.min.js
+            "value": "max-age=3600" 
+          }
+        ]
+      },
+      {
+        "source": "**/*.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            // Ini kritis: Pastikan HTML selalu diperbarui
+            "value": "max-age=0, no-cache, no-store, must-revalidate"
+          }
+        ]
+      }
+    ]
+  }
+}
